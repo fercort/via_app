@@ -1,0 +1,19 @@
+[project]
+name = "traffic-counter-yolo26-backend"
+version = "1.0.0"
+description = "Backend de aforo y clasificación vehicular con YOLO26, ByteTrack y Supervision LineZone"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "ultralytics>=8.4.0",
+    "supervision>=0.25.0",
+    "opencv-python-headless>=4.10.0.84",
+    "python-multipart>=0.0.12",
+    "pydantic>=2.9.0",
+]
+
+[tool.uv]
+override-dependencies = [
+    "opencv-python; python_version < '0'",
+]
