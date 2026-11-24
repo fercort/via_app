@@ -1,13 +1,17 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   Cpu,
   Loader2,
+  Pencil,
   Radar,
+  RotateCcw,
   Server,
   StopCircle,
   Timer,
+  X,
 } from "lucide-react";
 
 import { LineCanvasEditor } from "./components/LineCanvasEditor";
@@ -25,10 +29,38 @@ import {
   VideoMetadata,
 } from "./types";
 
-const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(
+const API_URL_STORAGE_KEY = "traffic_counter_api_url";
+const DEFAULT_API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(
   /\/+$/,
   ""
 );
+
+function normalizeApiUrl(raw: string): string {
+  return raw.trim().replace(/\/+$/, "");
+}
+
+function getInitialApiUrl(): string {
+  try {
+    const paramUrl = new URLSearchParams(window.location.search).get("api");
+    if (paramUrl) {
+      const normalized = normalizeApiUrl(paramUrl);
+      if (normalized) {
+        window.localStorage.setItem(API_URL_STORAGE_KEY, normalized);
+        return normalized;
+      }
+    }
+    const storedUrl = window.localStorage.getItem(API_URL_STORAGE_KEY);
+    if (storedUrl) {
+      const normalized = normalizeApiUrl(storedUrl);
+      if (normalized) {
+        return normalized;
+      }
+    }
+  } catch {
+    // Ignorar errores de acceso a localStorage o window
+  }
+  return DEFAULT_API_URL;
+}
 
 function formatElapsedTime(elapsedMs: number): string {
   const totalSeconds = elapsedMs / 1000;
@@ -65,6 +97,10 @@ export default function App(): React.ReactElement {
   const [metrics, setMetrics] = useState<LineMetrics[] | null>(null);
   const [videoMetadata, setVideoMetadata] = useState<VideoMetadata | null>(null);
   const [processingTimeSec, setProcessingTimeSec] = useState<number | null>(null);
+  const [apiUrl, setApiUrl] = useState<string>(getInitialApiUrl);
+  const [isEditingApiUrl, setIsEditingApiUrl] = useState<boolean>(false);
+  const [apiUrlDraft, setApiUrlDraft] = useState<string>("");
+  const [apiHealth, setApiHealth] = useState<"checking" | "online" | "offline">("checking");
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const timerStartRef = useRef<number | null>(null);
@@ -95,6 +131,68 @@ export default function App(): React.ReactElement {
       abortControllerRef.current?.abort();
     };
   }, []);
+
+  // Verificar estado del backend cuando cambia la URL configurada
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 6000);
+    setApiHealth("checking");
+
+    fetch(`${apiUrl}/health`, { signal: controller.signal })
+      .then((res) => {
+        if (!cancelled) {
+          setApiHealth(res.ok ? "online" : "offline");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setApiHealth("offline");
+        }
+      })
+      .finally(() => {
+        window.clearTimeout(timeoutId);
+      });
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [apiUrl]);
+
+  const handleOpenApiUrlEditor = () => {
+    if (isAnalyzing) {
+      return;
+    }
+    setApiUrlDraft(apiUrl);
+    setIsEditingApiUrl(true);
+  };
+
+  const handleSaveApiUrl = (event?: React.FormEvent) => {
+    event?.preventDefault();
+    const normalized = normalizeApiUrl(apiUrlDraft);
+    if (!normalized) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(API_URL_STORAGE_KEY, normalized);
+    } catch {
+      // Ignorar errores de almacenamiento local
+    }
+    setApiUrl(normalized);
+    setIsEditingApiUrl(false);
+  };
+
+  const handleResetApiUrl = () => {
+    try {
+      window.localStorage.removeItem(API_URL_STORAGE_KEY);
+    } catch {
+      // Ignorar errores de almacenamiento local
+    }
+    setApiUrl(DEFAULT_API_URL);
+    setIsEditingApiUrl(false);
+  };
 
   const handleVideoLoaded = (extracted: ExtractedVideoFrame) => {
     setVideoData(extracted);
@@ -154,7 +252,7 @@ export default function App(): React.ReactElement {
     formData.append("config", JSON.stringify(configPayload));
 
     try {
-      const response = await fetch(`${API_URL}/api/analyze`, {
+      const response = await fetch(`${apiUrl}/api/analyze`, {
         method: "POST",
         body: formData,
         signal: controller.signal,
@@ -272,10 +370,75 @@ export default function App(): React.ReactElement {
           </div>
 
           <div className="flex items-center gap-2.5">
-            <div className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 font-mono text-xs text-slate-300">
-              <Server className="h-3.5 w-3.5 text-emerald-400" />
-              <span className="max-w-[200px] truncate">{API_URL}</span>
-            </div>
+            {isEditingApiUrl ? (
+              <form
+                onSubmit={handleSaveApiUrl}
+                className="flex items-center gap-1.5 rounded-lg border border-cyan-500/50 bg-slate-900 px-2 py-1"
+              >
+                <Server className="h-3.5 w-3.5 shrink-0 text-cyan-400" />
+                <input
+                  type="text"
+                  inputMode="url"
+                  value={apiUrlDraft}
+                  onChange={(e) => setApiUrlDraft(e.target.value)}
+                  placeholder="https://xxxx.trycloudflare.com"
+                  autoFocus
+                  className="w-48 bg-transparent font-mono text-xs text-slate-100 placeholder-slate-500 focus:outline-none sm:w-64"
+                />
+                <button
+                  type="submit"
+                  title="Guardar URL del backend"
+                  className="rounded p-1 text-emerald-400 transition hover:bg-emerald-500/20"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </button>
+                {apiUrl !== DEFAULT_API_URL && (
+                  <button
+                    type="button"
+                    onClick={handleResetApiUrl}
+                    title="Restaurar URL por defecto"
+                    className="rounded p-1 text-amber-400 transition hover:bg-amber-500/20"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsEditingApiUrl(false)}
+                  title="Cancelar"
+                  className="rounded p-1 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={handleOpenApiUrlEditor}
+                disabled={isAnalyzing}
+                title={`Estado: ${
+                  apiHealth === "online"
+                    ? "Conectado"
+                    : apiHealth === "checking"
+                      ? "Verificando conexión..."
+                      : "Sin conexión"
+                } — Haz clic para editar la URL del backend (${apiUrl})`}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 font-mono text-xs text-slate-300 transition hover:border-cyan-500/50 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-full ${
+                    apiHealth === "online"
+                      ? "bg-emerald-400"
+                      : apiHealth === "checking"
+                        ? "animate-pulse bg-amber-400"
+                        : "bg-rose-400"
+                  }`}
+                />
+                <Server className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                <span className="max-w-[200px] truncate">{apiUrl}</span>
+                <Pencil className="h-3 w-3 shrink-0 text-slate-500" />
+              </button>
+            )}
             <div className="hidden items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 font-mono text-xs text-slate-400 md:inline-flex">
               <Cpu className="h-3.5 w-3.5 text-cyan-400" />
               <span>{modelName}</span>
